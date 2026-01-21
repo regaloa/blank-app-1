@@ -1,222 +1,283 @@
 import streamlit as st
-import time
 import random
+import time
+import google.generativeai as genai
 
-# --- データ: TOEIC 700点を目指すための単語リスト（レベル別） ---
+# ==========================================
+# 1. データ & 設定
+# ==========================================
+
+# TOEIC 700点レベルを意識した単語リスト
 VOCAB_DB = {
-    "Level 1 (基礎)": {
-        "budget": "予算",
-        "delay": "遅れ",
-        "accept": "受け入れる",
-        "supply": "供給",
-        "invite": "招待する"
-    },
-    "Level 2 (頻出)": {
-        "negotiation": "交渉",
-        "indicate": "示す",
-        "candidate": "候補者",
-        "frequently": "頻繁に",
-        "purchase": "購入する"
-    },
-    "Level 3 (700点突破)": {
-        "comprehensive": "包括的な",
-        "incentive": "動機付け",
-        "merger": "合併",
-        "preliminary": "予備の",
-        "subsequent": "その後の"
-    }
+    "Level 1 (初級)": [
+        {"en": "Profit", "jp": "利益"},
+        {"en": "Hire",   "jp": "雇う"},
+        {"en": "Branch", "jp": "支店"},
+        {"en": "Order",  "jp": "注文"},
+        {"en": "Bill",   "jp": "請求書"},
+        {"en": "Copy",   "jp": "部数/写し"},
+    ],
+    "Level 2 (中級)": [
+        {"en": "Refund", "jp": "返金"},
+        {"en": "Agenda", "jp": "議題"},
+        {"en": "Resume", "jp": "履歴書"},
+        {"en": "Confirm","jp": "確認する"},
+        {"en": "Supply", "jp": "備品"},
+        {"en": "Launch", "jp": "発売する"},
+    ],
+    "Level 3 (上級)": [
+        {"en": "Inquiry",    "jp": "問い合わせ"},
+        {"en": "Quarter",    "jp": "四半期"},
+        {"en": "Warranty",   "jp": "保証"},
+        {"en": "Deadline",   "jp": "締め切り"},
+        {"en": "Proposal",   "jp": "提案"},
+        {"en": "Executive",  "jp": "重役"},
+    ]
 }
 
-# --- 関数: 物語の生成 ---
-def generate_story(words):
-    if not words:
-        return "冒険の記録は白紙のままだ..."
+# ==========================================
+# 2. 関数: AI物語生成 & ゲームロジック
+# ==========================================
+
+def get_ai_story(api_key, words):
+    """Gemini APIを使って物語を生成する関数"""
+    if not api_key:
+        return "（APIキーが設定されていないため、AI生成をスキップしました。設定するとここにAIが書いた物語が表示されます。）\n\n" + \
+               generate_dummy_story(words)
     
-    # 手に入れた単語を無理やり物語に組み込むテンプレート
-    templates = [
-        f"ジムリーダーとの **{random.choice(words)}** が始まった。",
-        f"しかし、伝説のポケモンは **{random.choice(words)}** を要求してきた！",
-        f"博士は言った。「真のトレーナーには **{random.choice(words)}** が必要なのじゃ」",
-        f"こうして、彼らの **{random.choice(words)}** な旅は幕を閉じた。",
-        f"次の町へ進むには **{random.choice(words)}** しなければならない。"
-    ]
-    return " ".join(templates)
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-pro')
+        
+        word_list_str = ", ".join(words)
+        prompt = f"""
+        以下の英単語すべてを使って、短い興味深い物語（日本語）を作ってください。
+        単語は英語のまま文中に埋め込み、その直後にカッコ書きで日本語の意味を補足してください。
+        
+        使用単語: {word_list_str}
+        """
+        
+        with st.spinner("AIが物語を執筆中..."):
+            response = model.generate_content(prompt)
+            return response.text
+    except Exception as e:
+        return f"エラーが発生しました: {e}\n\n" + generate_dummy_story(words)
 
-# --- メイン処理 ---
+def generate_dummy_story(words):
+    """APIが使えない時の予備テンプレート"""
+    if not words: return "物語を作るための言葉が足りない..."
+    return f"昔々、あるところに **{random.choice(words)}** を探し求める冒険者がいました。彼は旅の途中で **{random.choice(words)}** に遭遇し、最後は幸せに暮らしました。（※AIキーを設定すると、もっと凄い物語がここに生成されます）"
+
+def init_game(word_list, time_limit):
+    """ゲームの初期化（カードを配る）"""
+    cards = []
+    for item in word_list:
+        # 識別用にIDを付与 (例: "Profit"ならID=Profit)
+        # 英語カード
+        cards.append({
+            "id": item["en"], 
+            "text": item["en"], 
+            "is_jp": False,
+            "pair": item["jp"]
+        })
+        # 日本語カード
+        cards.append({
+            "id": item["en"], 
+            "text": item["jp"], 
+            "is_jp": True,
+            "pair": item["en"]
+        })
+    
+    random.shuffle(cards)
+    
+    st.session_state.cards = cards
+    st.session_state.flipped = []  # 現在めくっているカードのインデックス
+    st.session_state.matched_ids = set()  # 揃ったペアのID
+    st.session_state.collected_words = [] # ゲットした単語(英語)
+    
+    st.session_state.start_time = time.time()
+    st.session_state.time_limit = time_limit
+    st.session_state.game_over = False
+    st.session_state.is_revenge = False # リベンジモードフラグ
+
+# ==========================================
+# 3. メインアプリ
+# ==========================================
+
 def main():
-    st.title("⚡ TOEIC 700 単語ラッシュ")
-    st.caption("制限時間内に単語を回収し、物語を紡げ！")
+    st.set_page_config(page_title="AI Memory Battle", layout="wide")
+    
+    # --- サイドバー設定 ---
+    st.sidebar.title("⚙️ 設定")
+    
+    # APIキー入力
+    api_key = st.sidebar.text_input("Gemini APIキー (任意)", type="password", help="Google AI Studioで取得したキーを入れるとAI物語生成が有効になります。")
+    
+    # レベル選択
+    level = st.sidebar.selectbox("レベル選択", list(VOCAB_DB.keys()))
+    
+    # 制限時間
+    limit_sec = st.sidebar.slider("制限時間 (秒)", 15, 120, 45)
 
-    # --- セッション状態の初期化 ---
-    if "game_state" not in st.session_state:
-        st.session_state.game_state = "MENU" # MENU, PLAYING, RESULT, EXTRA
-    if "score" not in st.session_state:
-        st.session_state.score = 0
-    if "collected_words" not in st.session_state:
-        st.session_state.collected_words = []
-    if "mistake_list" not in st.session_state:
-        st.session_state.mistake_list = {} # {eng: jp}
-    if "start_time" not in st.session_state:
-        st.session_state.start_time = 0
+    # リセットボタン
+    if st.sidebar.button("ニューゲーム"):
+        init_game(VOCAB_DB[level], limit_sec)
+        st.session_state.game_mode = "NORMAL" # 通常モード
+        st.rerun()
 
-    # ==========================
-    # 1. メニュー画面 (レベル選択)
-    # ==========================
-    if st.session_state.game_state == "MENU":
-        st.markdown("### 難易度を選んでください")
-        level = st.selectbox("ステージ選択", list(VOCAB_DB.keys()))
-        time_limit = st.slider("制限時間 (秒)", 10, 60, 30)
+    # --- アプリ起動時の初期化 ---
+    if "cards" not in st.session_state:
+        init_game(VOCAB_DB[level], limit_sec)
+        st.session_state.game_mode = "NORMAL"
 
-        if st.button("ゲームスタート！"):
-            # ゲームデータのセットアップ
-            words = list(VOCAB_DB[level].items())
-            random.shuffle(words)
-            st.session_state.current_word_queue = words
-            st.session_state.current_word = st.session_state.current_word_queue.pop(0)
-            
-            # 状態のリセット
-            st.session_state.collected_words = []
-            st.session_state.mistake_list = {}
-            st.session_state.score = 0
-            st.session_state.limit_seconds = time_limit
-            st.session_state.start_time = time.time()
-            st.session_state.game_state = "PLAYING"
-            st.rerun()
-
-    # ==========================
-    # 2. プレイ画面 (タイムアタック)
-    # ==========================
-    elif st.session_state.game_state == "PLAYING":
-        # 残り時間の計算
-        elapsed = time.time() - st.session_state.start_time
-        remaining = st.session_state.limit_seconds - elapsed
-        
-        # プログレスバー表示
-        progress = max(0.0, remaining / st.session_state.limit_seconds)
-        st.progress(progress)
-        st.write(f"残り時間: **{remaining:.1f}** 秒")
-
-        # 時間切れ判定
-        if remaining <= 0:
+    st.title("🧠 英単語・神経衰弱バトル")
+    
+    # --- ヘッダー情報（残り時間・スコア） ---
+    elapsed = time.time() - st.session_state.start_time
+    remaining = st.session_state.time_limit - elapsed
+    
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        if remaining > 0 and not st.session_state.game_over:
+            st.progress(remaining / st.session_state.time_limit)
+            st.caption(f"残り時間: {remaining:.1f} 秒")
+        elif remaining <= 0 and not st.session_state.game_over:
             st.error("⏰ タイムアップ！")
-            st.session_state.game_state = "RESULT"
-            time.sleep(2)
+            st.session_state.game_over = True
             st.rerun()
-
-        # 問題表示
-        eng_word, jp_meaning = st.session_state.current_word
-        st.markdown(f"## {eng_word}")
-        
-        # 選択肢を作成（正解1つ + ダミー2つ）
-        options = [jp_meaning]
-        # 全レベルの単語からダミーを抽出
-        all_meanings = [v for lvl in VOCAB_DB.values() for v in lvl.values()]
-        while len(options) < 3:
-            dummy = random.choice(all_meanings)
-            if dummy not in options:
-                options.append(dummy)
-        random.shuffle(options)
-
-        # ユーザー回答ボタン
-        cols = st.columns(3)
-        for i, opt in enumerate(options):
-            if cols[i].button(opt, key=f"opt_{i}"):
-                # 正誤判定
-                if opt == jp_meaning:
-                    st.toast("⭕ 正解！ゲット！")
-                    st.session_state.score += 1
-                    st.session_state.collected_words.append(eng_word)
-                else:
-                    st.toast(f"❌ ミス！正解は: {jp_meaning}")
-                    # 間違いリストに追加
-                    st.session_state.mistake_list[eng_word] = jp_meaning
-
-                # 次の問題があるかチェック
-                if st.session_state.current_word_queue:
-                    st.session_state.current_word = st.session_state.current_word_queue.pop(0)
-                    st.rerun()
-                else:
-                    st.success("全問クリア！")
-                    st.session_state.game_state = "RESULT"
-                    st.rerun()
-        
-        # 諦めて終了ボタン
-        if st.button("リタイアして結果を見る"):
-            st.session_state.game_state = "RESULT"
-            st.rerun()
-
-    # ==========================
-    # 3. 結果画面 (物語 & 復習誘導)
-    # ==========================
-    elif st.session_state.game_state == "RESULT":
-        st.markdown("## 🏆 結果発表")
-        st.metric("スコア", f"{st.session_state.score} 点")
-        
-        st.divider()
-        st.subheader("📖 生成された冒険の記録")
-        if st.session_state.collected_words:
-            story = generate_story(st.session_state.collected_words)
-            st.info(story)
-            st.caption(f"使用された単語: {', '.join(st.session_state.collected_words)}")
         else:
-            st.warning("単語を1つもゲットできなかったため、冒険の記録は残らなかった...")
-
-        st.divider()
-        
-        # エキストラステージ（復習）の判定
-        if st.session_state.mistake_list:
-            st.error(f"⚠️ 復習が必要な単語が {len(st.session_state.mistake_list)} 個あります！")
-            st.write(st.session_state.mistake_list)
+            st.progress(0)
+            st.caption("終了")
             
-            if st.button("🔥 エキストラステージ（復習）へ"):
-                # 復習モードのセットアップ
-                # 辞書をタプルのリストに変換 [(eng, jp), ...]
-                review_items = list(st.session_state.mistake_list.items())
-                random.shuffle(review_items)
-                
-                st.session_state.current_word_queue = review_items
-                st.session_state.current_word = st.session_state.current_word_queue.pop(0)
-                
-                # 復習は時間無制限にする設定
-                st.session_state.limit_seconds = 999
-                st.session_state.start_time = time.time()
-                
-                # 状態遷移
-                st.session_state.game_state = "EXTRA"
-                st.rerun()
-        else:
-            st.success("素晴らしい！復習する単語はありません。")
+    with col2:
+        st.metric("ゲットした単語", f"{len(st.session_state.collected_words)} 語")
+    with col3:
+        mode_label = "🔥 リベンジ中" if st.session_state.game_mode == "REVENGE" else "通常モード"
+        st.badge(mode_label)
+
+    st.divider()
+
+    # ==========================
+    # ゲーム盤面描画
+    # ==========================
+    
+    # カードグリッドの作成 (4列)
+    cols = st.columns(4)
+    
+    for i, card in enumerate(st.session_state.cards):
+        # カードの状態判定
+        is_matched = card["id"] in st.session_state.matched_ids
+        is_flipped = i in st.session_state.flipped
         
-        if st.button("タイトルに戻る"):
-            st.session_state.game_state = "MENU"
+        # ボタンのラベル
+        if is_matched or is_flipped or st.session_state.game_over:
+            # ゲームオーバー時は全オープン（答え合わせ）
+            label = card["text"]
+            # スタイル調整: 揃ったものは緑、それ以外でオープンしてるものは黄色
+            if is_matched:
+                label = f"✅ {label}"
+            elif st.session_state.game_over:
+                label = f"❌ {label}" # 揃わなかったもの
+        else:
+            label = "❓"
+
+        # ボタン配置
+        with cols[i % 4]:
+            # マッチ済み、またはゲーム終了時はボタンを押せなくする
+            if is_matched or st.session_state.game_over:
+                st.button(label, key=f"btn_{i}", disabled=True)
+            else:
+                # カードクリック処理
+                if st.button(label, key=f"btn_{i}"):
+                    if len(st.session_state.flipped) < 2:
+                        st.session_state.flipped.append(i)
+                        st.rerun()
+
+    # ==========================
+    # 判定ロジック
+    # ==========================
+    if len(st.session_state.flipped) == 2:
+        idx1, idx2 = st.session_state.flipped
+        card1 = st.session_state.cards[idx1]
+        card2 = st.session_state.cards[idx2]
+
+        if card1["id"] == card2["id"]:
+            # 正解！
+            st.toast(f"Nice! {card1['text']} = {card2['text']}")
+            st.session_state.matched_ids.add(card1["id"])
+            st.session_state.collected_words.append(card1["id"]) # 英語IDを保存
+            st.session_state.flipped = []
+            time.sleep(0.5)
+            
+            # 全部揃ったらゲームクリア
+            if len(st.session_state.matched_ids) * 2 == len(st.session_state.cards):
+                st.session_state.game_over = True
+            
+            st.rerun()
+        else:
+            # 不正解
+            st.error("不一致...")
+            # ユーザーが確認できるよう少し待ってからリセット（手動クリック待ちにしても良いがテンポ重視で自動）
+            time.sleep(1) 
+            st.session_state.flipped = []
             st.rerun()
 
     # ==========================
-    # 4. エキストラステージ (復習モード)
+    # ゲーム終了後の処理 (物語 & リベンジ)
     # ==========================
-    elif st.session_state.game_state == "EXTRA":
-        st.markdown("## 🔥 EXTRA STAGE (復習)")
-        st.caption("間違えた単語を確実に倒そう！")
+    if st.session_state.game_over:
+        st.divider()
+        st.header("🎮 ゲームセット")
+        
+        # 1. 残った単語の抽出
+        all_ids = set(c["id"] for c in st.session_state.cards)
+        matched_ids = st.session_state.matched_ids
+        unsolved_ids = list(all_ids - matched_ids)
+        
+        col_res1, col_res2 = st.columns(2)
+        
+        with col_res1:
+            st.subheader("📜 獲得した単語で物語生成")
+            if st.session_state.collected_words:
+                if st.button("AIで物語を書く 🖋️"):
+                    story = get_ai_story(api_key, st.session_state.collected_words)
+                    st.success(story)
+            else:
+                st.write("単語を1つもゲットできませんでした...")
 
-        eng_word, jp_meaning = st.session_state.current_word
-        st.header(f"{eng_word}")
-        
-        # 復習モードは選択肢ではなく「入力式」にして難易度を上げる（または確認のみ）
-        # ここではシンプルに「答えを見る」形式にします
-        with st.expander("答えを見る"):
-            st.write(f"正解: **{jp_meaning}**")
-        
-        if st.button("覚えた！"):
-            if st.session_state.current_word_queue:
-                st.session_state.current_word = st.session_state.current_word_queue.pop(0)
-                st.rerun()
+        with col_res2:
+            st.subheader("🔥 次のステージへ")
+            if unsolved_ids:
+                st.warning(f"ペアにならなかった単語: {len(unsolved_ids)} 語")
+                st.write(f"残った単語: {', '.join(unsolved_ids)}")
+                
+                # リベンジボタン
+                if st.button("残った単語だけでリベンジする！"):
+                    # 未解決IDから新しい単語リストを作成
+                    revenge_list = []
+                    # 現在のカード情報からテキスト情報を復元してリスト化
+                    # （本来はVOCAB_DBから引くのが綺麗ですが、簡略化のため現在のカードから抽出）
+                    seen = set()
+                    for c in st.session_state.cards:
+                        if c["id"] in unsolved_ids and c["id"] not in seen:
+                            # 英語と日本語のペアを探す
+                            pair_text = c["pair"]
+                            revenge_list.append({"en": c["id"] if not c["is_jp"] else pair_text, 
+                                                 "jp": c["text"] if c["is_jp"] else pair_text})
+                            seen.add(c["id"])
+                    
+                    # リベンジステージ初期化
+                    init_game(revenge_list, st.session_state.time_limit) # 時間は同じ設定で
+                    st.session_state.game_mode = "REVENGE"
+                    st.rerun()
             else:
                 st.balloons()
-                st.success("復習完了！完璧だ！")
-                if st.button("タイトルへ"):
-                    st.session_state.game_state = "MENU"
+                st.success("完璧です！すべての単語をクリアしました！")
+                if st.button("最初のレベル選択に戻る"):
+                    st.session_state.game_mode = "NORMAL"
+                    # ページリロード的な挙動
+                    del st.session_state.cards
                     st.rerun()
 
 if __name__ == "__main__":
     main()
-    
