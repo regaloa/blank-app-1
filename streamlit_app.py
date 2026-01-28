@@ -37,13 +37,23 @@ supabase = init_supabase()
 def generate_quiz_words(api_key, rank_prompt):
     """AIに単語リストを作らせる"""
     if not api_key:
-        return [{"en": "Pikachu", "jp": "ピカチュウ"}, {"en": "Thunder", "jp": "雷"}, {"en": "Battle", "jp": "戦う"}]
+        # ★変更点: APIなし時の予備データをTOEIC単語8個に変更
+        return [
+            {"en": "Strategy",   "jp": "戦略"},
+            {"en": "Efficiency", "jp": "効率"},
+            {"en": "Deadline",   "jp": "締め切り"},
+            {"en": "Negotiate",  "jp": "交渉する"},
+            {"en": "Inquiry",    "jp": "問い合わせ"},
+            {"en": "Expand",     "jp": "拡大する"},
+            {"en": "Launch",     "jp": "立ち上げる/発売"},
+            {"en": "Budget",     "jp": "予算"}
+        ]
 
     client = genai.Client(api_key=api_key)
     
-    # プロンプト修正: TOEIC 700点レベルまでの単語を厳選
+    # ★変更点: Generate 8 unique words
     prompt = f"""
-    Generate 6 unique English vocabulary words specifically for {rank_prompt}.
+    Generate 8 unique English vocabulary words specifically for {rank_prompt}.
     The words should be commonly found in TOEIC tests but NOT exceeding the 750 score level.
     Output MUST be a valid JSON list of objects with 'en' (English word) and 'jp' (Japanese meaning).
     Example: [{{"en": "Profit", "jp": "利益"}}, {{"en": "Hire", "jp": "雇う"}}]
@@ -134,11 +144,12 @@ def main():
     # A. スタート画面
     # ==========================
     if st.session_state.game_state == "IDLE":
-        st.write(f"**{selected_rank_name}** の野生の単語が現れた！")
+        st.write(f"**{selected_rank_name}** の野生の単語が現れた！(8匹)")
         if st.button("バトル開始！ (Start)", type="primary"):
             with st.spinner("草むらから単語を探しています..."):
                 quiz_data = generate_quiz_words(api_key, RANK_MAP[selected_rank_name])
-                init_game(quiz_data, 45) 
+                # ★変更点: 制限時間を30秒に設定
+                init_game(quiz_data, 30) 
                 st.rerun()
 
     # ==========================
@@ -158,7 +169,7 @@ def main():
         st.progress(max(0.0, remaining / st.session_state.time_limit))
         st.caption(f"残り時間: {remaining:.1f}秒")
 
-        # カード表示
+        # カード表示 (4列 x 4行 = 16枚)
         cols = st.columns(4)
         for i, card in enumerate(st.session_state.cards):
             # 状態判定
@@ -169,92 +180,9 @@ def main():
             if is_matched:
                 label = f"✨ {card['text']}" 
             elif is_flipped:
-                label = card["text"] # めくったカード（色はそのまま！）
+                label = card["text"] # めくったカード
             else:
                 label = "◓" # 裏面
 
             with cols[i % 4]:
-                # ★修正点: matched（正解済み）だけ disabled にする。
-                # flipped（めくり中）は disabled=False にして、色を濃く保つ。
-                if st.button(label, key=f"btn_{i}", disabled=is_matched):
-                    # めくったカードを再度押しても反応しないように制御
-                    if not is_flipped and len(st.session_state.flipped) < 2:
-                        st.session_state.flipped.append(i)
-                        st.rerun()
-
-        # 判定ロジック
-        if len(st.session_state.flipped) == 2:
-            idx1, idx2 = st.session_state.flipped
-            c1 = st.session_state.cards[idx1]
-            c2 = st.session_state.cards[idx2]
-
-            if c1["id"] == c2["id"]:
-                st.toast(f"Gotcha! {c1['id']} をゲット！")
-                st.session_state.matched.add(c1["id"])
-                
-                if c1["id"] not in st.session_state.collected_now:
-                    st.session_state.collected_now.append(c1["id"])
-                
-                st.session_state.flipped = []
-                
-                if len(st.session_state.matched) * 2 == len(st.session_state.cards):
-                    st.session_state.game_state = "FINISHED"
-                    st.rerun()
-                
-                time.sleep(0.5)
-                st.rerun()
-            else:
-                st.error(f"ああっ！逃げられた... ({c1['text']} ≠ {c2['text']})")
-                
-                en_txt = c1["id"]
-                jp_txt = c1["pair"] if not c1["is_jp"] else c1["text"]
-                save_mistake(en_txt, jp_txt)
-                
-                mistake_obj = {"en": en_txt, "jp": jp_txt}
-                if not any(m["en"] == en_txt for m in st.session_state.mistakes_now):
-                    st.session_state.mistakes_now.append(mistake_obj)
-
-                time.sleep(1.0)
-                st.session_state.flipped = []
-                st.rerun()
-
-    # ==========================
-    # C. 結果画面
-    # ==========================
-    elif st.session_state.game_state == "FINISHED":
-        st.header("🏆 バトル終了！")
-        
-        if st.session_state.collected_now:
-            st.success(f"ゲットした単語: {', '.join(st.session_state.collected_now)}")
-            
-            st.divider()
-            st.subheader("📖 冒険の記録 (AI Story)")
-            if st.button("記録を書く (Generate Story)"):
-                with st.spinner("レポート作成中..."):
-                    story = get_english_story(api_key, st.session_state.collected_now)
-                    st.info(story)
-        else:
-            st.warning("単語を一匹も捕まえられなかった...")
-
-        st.divider()
-
-        mistakes = st.session_state.mistakes_now
-        if mistakes:
-            st.error(f"今回のミス: {len(mistakes)} 匹")
-            for m in mistakes:
-                st.text(f"・{m['en']} : {m['jp']}")
-            
-            if st.button("🔥 エキストラステージで捕まえ直す！"):
-                init_game(mistakes, 30) 
-                st.session_state.game_state = "EXTRA"
-                st.rerun()
-        else:
-            st.balloons()
-            st.success("素晴らしい！ノーミスでクリアだ！")
-
-        if st.button("次の町へ進む (New Game)"):
-            st.session_state.game_state = "IDLE"
-            st.rerun()
-
-if __name__ == "__main__":
-    main()
+                #
