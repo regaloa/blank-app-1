@@ -29,7 +29,6 @@ supabase = init_supabase()
 def generate_quiz_words(api_key, level):
     """AIに単語リストを作らせる (APIキーがない場合は予備リストを返す)"""
     if not api_key:
-        # ★ キーがない時の予備単語リスト (ここも英語メインに)
         return [
             {"en": "Galaxy", "jp": "銀河"},
             {"en": "Planet", "jp": "惑星"},
@@ -41,7 +40,6 @@ def generate_quiz_words(api_key, level):
 
     client = genai.Client(api_key=api_key)
     
-    # JSONのみを返すように厳格に指示
     prompt = f"""
     Generate 6 unique English vocabulary words for TOEIC {level} level.
     Output MUST be a valid JSON list of objects with 'en' (English word) and 'jp' (Japanese meaning).
@@ -58,23 +56,18 @@ def generate_quiz_words(api_key, level):
         return json.loads(response.text)
     except Exception as e:
         st.error(f"AI Error: {e}")
-        # エラー時の予備
         return [{"en": "Error", "jp": "エラー"}, {"en": "Retry", "jp": "再試行"}]
 
 def get_english_story(api_key, words):
-    """AIに英語の物語を作らせる (APIキーがない場合は予備の英語物語を返す)"""
-    
-    # ★ ここがご要望の修正箇所です ★
+    """AIに英語の物語を作らせる"""
     if not api_key:
         word_list_str = ", ".join([f"**{w}**" for w in words])
         return f"""
         (Note: AI Story generation skipped because API Key is missing. Here is a template story.)
         
         Once upon a time, there was a brave adventurer who was looking for {word_list_str}.
-        
         One day, he found them all in a magical forest.
         "Finally!" he shouted. "I have collected everything!"
-        
         And so, he lived happily ever after. The End.
         """
     
@@ -148,7 +141,6 @@ def main():
     # --- メイン画面 ---
     st.title("🤖 Infinite English Battle")
     
-    # APIキーがない場合の警告（ただしゲームは遊べるようにする）
     if not api_key:
         st.warning("⚠️ API Key is missing. Using offline demo words & template story.")
     else:
@@ -162,17 +154,14 @@ def main():
     if st.session_state.game_state == "IDLE":
         if st.button("🚀 Start New Game", type="primary"):
             with st.spinner(f"Generating words..."):
-                # AIに問題を作らせる（キーがなければ予備リスト）
                 quiz_data = generate_quiz_words(api_key, selected_level)
                 
-                # カード生成
                 cards = []
                 for item in quiz_data:
                     cards.append({"id": item["en"], "text": item["en"], "pair": item["jp"], "is_jp": False})
                     cards.append({"id": item["en"], "text": item["jp"], "pair": item["en"], "is_jp": True})
                 random.shuffle(cards)
                 
-                # ゲーム開始設定
                 st.session_state.cards = cards
                 st.session_state.flipped = []
                 st.session_state.matched = set()
@@ -210,9 +199,59 @@ def main():
                     st.session_state.flipped.append(i)
                     st.rerun()
 
+        # ↓↓↓ エラーが出ていたのはこのあたりの字下げです ↓↓↓
         if len(st.session_state.flipped) == 2:
             idx1, idx2 = st.session_state.flipped
             c1 = st.session_state.cards[idx1]
             c2 = st.session_state.cards[idx2]
 
             if c1["id"] == c2["id"]:
+                # 正解時の処理
+                st.toast(f"Matched! {c1['id']}")
+                st.session_state.matched.add(c1["id"])
+                
+                if c1["id"] not in st.session_state.collected_now:
+                    st.session_state.collected_now.append(c1["id"])
+                    en_txt = c1["id"]
+                    jp_txt = c1["pair"] if not c1["is_jp"] else c1["text"]
+                    save_word(en_txt, jp_txt)
+
+                st.session_state.flipped = []
+                
+                if len(st.session_state.matched) * 2 == len(st.session_state.cards):
+                    st.session_state.game_state = "FINISHED"
+                    st.rerun()
+                
+                time.sleep(0.5)
+                st.rerun()
+            else:
+                # 不正解時の処理
+                st.error("Miss...")
+                time.sleep(0.8)
+                st.session_state.flipped = []
+                st.rerun()
+
+    # --- 3. 結果画面 ---
+    elif st.session_state.game_state == "FINISHED":
+        st.header("🏁 Game Over!")
+        
+        got_words = st.session_state.collected_now
+        if got_words:
+            st.success(f"You collected: {', '.join(got_words)}")
+            st.divider()
+            
+            st.subheader("📖 AI English Story")
+            if st.button("Generate Story"):
+                with st.spinner("Writing story..."):
+                    story = get_english_story(api_key, got_words)
+                    st.info(story)
+        else:
+            st.warning("No words collected this time...")
+
+        st.divider()
+        if st.button("Play Again (Generate New Words)"):
+            st.session_state.game_state = "IDLE"
+            st.rerun()
+
+if __name__ == "__main__":
+    main()
