@@ -283,3 +283,46 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+import streamlit as st
+from supabase import create_client
+
+st.title("🏥 Supabase 接続診断ツール")
+
+# 1. ライブラリチェック
+st.write("1. ライブラリ読み込み: OK")
+
+# 2. Secretsチェック
+try:
+    url = st.secrets["supabase"]["url"]
+    key = st.secrets["supabase"]["key"]
+    st.success(f"2. Secrets読み込み: OK (URL: {url[:8]}...)")
+except Exception as e:
+    st.error(f"2. Secrets読み込み: 失敗 ({e})")
+    st.stop()
+
+# 3. 接続チェック
+try:
+    supabase = create_client(url, key)
+    st.success("3. クライアント作成: OK")
+except Exception as e:
+    st.error(f"3. クライアント作成: 失敗 ({e})")
+    st.stop()
+
+# 4. データ取得チェック
+st.write("---")
+st.write("4. データベース接続テスト...")
+
+try:
+    # collected_words テーブルへのアクセス
+    response = supabase.table("collected_words").select("*", count="exact").limit(1).execute()
+    st.success(f"✅ 'collected_words' テーブル: 接続成功 (現在のデータ数: {response.count})")
+except Exception as e:
+    st.error(f"❌ 'collected_words' テーブル: エラー\n\n{e}")
+
+try:
+    # mistaken_words テーブルへのアクセス
+    response = supabase.table("mistaken_words").select("*", count="exact").limit(1).execute()
+    st.success(f"✅ 'mistaken_words' テーブル: 接続成功 (現在のデータ数: {response.count})")
+except Exception as e:
+    st.error(f"❌ 'mistaken_words' テーブル: エラー\n\n{e}")
