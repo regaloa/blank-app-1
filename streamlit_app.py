@@ -69,11 +69,27 @@ def generate_quiz_words(api_key, rank_prompt):
         return [{"en": "Error", "jp": "エラー"}]
 
 def get_english_story(api_key, words):
-    """英語の物語生成"""
-    if not api_key: return "Story generation skipped (No API Key)."
+    """英語の物語生成 (シンプル版)"""
+    # APIキーがない場合の予備ストーリー（英語）
+    if not api_key: 
+        return """
+        (Demo Story without AI)
+        Once upon a time, a young trainer went on a journey to find new words.
+        He found a **Strategy** to catch them all.
+        The **Deadline** was approaching, but he did not give up.
+        Finally, he managed to **Expand** his collection and became a master!
+        """
     
     client = genai.Client(api_key=api_key)
-    prompt = f"Write a very short Pokémon-style adventure story in English using: {', '.join(words)}. Highlight words in **bold**."
+    
+    # ★修正点: シンプルな英語を指定
+    prompt = f"""
+    Write a short and **simple** Pokémon-style adventure story in English using these words: {', '.join(words)}.
+    The English level should be easy to read (suitable for TOEIC 600 learners).
+    Highlight the used words in **bold**.
+    Keep it under 100 words.
+    """
+    
     try:
         response = client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
         return response.text
@@ -237,8 +253,9 @@ def main():
             
             st.divider()
             st.subheader("📖 冒険の記録 (AI Story)")
-            if st.button("記録を書く (Generate Story)"):
-                with st.spinner("レポート作成中..."):
+            # ★ここで物語を生成します
+            if st.button("記録を書く (Generate English Story)"):
+                with st.spinner("レポート作成中 (Writing simple story)..."):
                     story = get_english_story(api_key, st.session_state.collected_now)
                     st.info(story)
         else:
