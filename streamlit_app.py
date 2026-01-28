@@ -9,7 +9,6 @@ from supabase import create_client
 # ==========================================
 # 1. 設定 & 定数
 # ==========================================
-# ポケモン風ランク定義（TOEIC 700点までに制限）
 RANK_MAP = {
     "モンスターボール級 (基礎: 400点)": "TOEIC score 350-450 level (Basic)",
     "スーパーボール級 (応用: 550点)": "TOEIC score 500-600 level (Intermediate)",
@@ -37,7 +36,6 @@ supabase = init_supabase()
 def generate_quiz_words(api_key, rank_prompt):
     """AIに単語リストを作らせる"""
     if not api_key:
-        # ★変更点: APIなし時の予備データをTOEIC単語8個に変更
         return [
             {"en": "Strategy",   "jp": "戦略"},
             {"en": "Efficiency", "jp": "効率"},
@@ -51,7 +49,6 @@ def generate_quiz_words(api_key, rank_prompt):
 
     client = genai.Client(api_key=api_key)
     
-    # ★変更点: Generate 8 unique words
     prompt = f"""
     Generate 8 unique English vocabulary words specifically for {rank_prompt}.
     The words should be commonly found in TOEIC tests but NOT exceeding the 750 score level.
@@ -127,62 +124,4 @@ def main():
     
     # --- サイドバー ---
     st.sidebar.title("⚙️ トレーナー設定")
-    api_key = st.sidebar.text_input("Gemini API Key", type="password")
-    selected_rank_name = st.sidebar.selectbox("挑戦するランク", list(RANK_MAP.keys()))
-    
-    st.sidebar.divider()
-    m_count = get_mistakes_count()
-    st.sidebar.error(f"💀 苦手な単語: {m_count} 語")
-    
-    # --- メイン画面 ---
-    st.title("◓ ポケモン英単語バトル")
-    
-    if "game_state" not in st.session_state:
-        st.session_state.game_state = "IDLE"
-
-    # ==========================
-    # A. スタート画面
-    # ==========================
-    if st.session_state.game_state == "IDLE":
-        st.write(f"**{selected_rank_name}** の野生の単語が現れた！(8匹)")
-        if st.button("バトル開始！ (Start)", type="primary"):
-            with st.spinner("草むらから単語を探しています..."):
-                quiz_data = generate_quiz_words(api_key, RANK_MAP[selected_rank_name])
-                # ★変更点: 制限時間を30秒に設定
-                init_game(quiz_data, 30) 
-                st.rerun()
-
-    # ==========================
-    # B. プレイ中 (通常 & エキストラ共通)
-    # ==========================
-    elif st.session_state.game_state in ["PLAYING", "EXTRA"]:
-        if st.session_state.game_state == "EXTRA":
-            st.warning("🔥 エキストラステージ（復習モード）")
-        
-        elapsed = time.time() - st.session_state.start_time
-        remaining = st.session_state.time_limit - elapsed
-        
-        if remaining <= 0:
-            st.session_state.game_state = "FINISHED"
-            st.rerun()
-
-        st.progress(max(0.0, remaining / st.session_state.time_limit))
-        st.caption(f"残り時間: {remaining:.1f}秒")
-
-        # カード表示 (4列 x 4行 = 16枚)
-        cols = st.columns(4)
-        for i, card in enumerate(st.session_state.cards):
-            # 状態判定
-            is_matched = card["id"] in st.session_state.matched
-            is_flipped = i in st.session_state.flipped
-            
-            # ラベルとスタイルの決定
-            if is_matched:
-                label = f"✨ {card['text']}" 
-            elif is_flipped:
-                label = card["text"] # めくったカード
-            else:
-                label = "◓" # 裏面
-
-            with cols[i % 4]:
-                #
+    api_key = st.
