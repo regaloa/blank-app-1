@@ -36,7 +36,6 @@ supabase = init_supabase()
 def generate_quiz_words(api_key, rank_prompt):
     """AIに単語リストを作らせる"""
     if not api_key:
-        # APIなし時の予備データ (TOEIC単語8個)
         return [
             {"en": "Strategy",   "jp": "戦略"},
             {"en": "Efficiency", "jp": "効率"},
@@ -69,8 +68,7 @@ def generate_quiz_words(api_key, rank_prompt):
         return [{"en": "Error", "jp": "エラー"}]
 
 def get_english_story(api_key, words):
-    """英語の物語生成 (シンプル版)"""
-    # APIキーがない場合の予備ストーリー（英語）
+    """英語の物語生成"""
     if not api_key: 
         return """
         (Demo Story without AI)
@@ -81,27 +79,49 @@ def get_english_story(api_key, words):
         """
     
     client = genai.Client(api_key=api_key)
-    
-    # ★修正点: シンプルな英語を指定
     prompt = f"""
     Write a short and **simple** Pokémon-style adventure story in English using these words: {', '.join(words)}.
     The English level should be easy to read (suitable for TOEIC 600 learners).
     Highlight the used words in **bold**.
     Keep it under 100 words.
     """
-    
     try:
         response = client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
         return response.text
     except:
         return "Failed to generate story."
 
+# --- DB操作関連 ---
+
 def save_mistake(en, jp):
     """間違えた単語をDBに保存"""
     try:
         chk = supabase.table("mistaken_words").select("id").eq("word_en", en).execute()
         if not chk.data:
+            # 新規保存時は correct_count はデフォルト0
             supabase.table("mistaken_words").insert({"word_en": en, "word_jp": jp}).execute()
+    except:
+        pass
+
+def increment_correct_count(en):
+    """【新機能】正解数を+1し、現在の回数を返す"""
+    try:
+        # 現在の値を取得
+        res = supabase.table("mistaken_words").select("correct_count").eq("word_en", en).execute()
+        if res.data:
+            current = res.data[0]["correct_count"]
+            new_val = current + 1
+            # 更新
+            supabase.table("mistaken_words").update({"correct_count": new_val}).eq("word_en", en).execute()
+            return new_val
+    except:
+        pass
+    return 0
+
+def delete_mistake(en):
+    """DBから削除"""
+    try:
+        supabase.table("mistaken_words").delete().eq("word_en", en).execute()
     except:
         pass
 
@@ -112,17 +132,34 @@ def get_mistakes_count():
     except:
         return 0
 
+def fetch_revenge_words(limit=8):
+    """間違い単語を取得"""
+    try:
+        res = supabase.table("mistaken_words").select("*").execute()
+        data = res.data
+        if not data:
+            return []
+        
+        random.shuffle(data)
+        selected = data[:limit]
+        
+        # correct_count も含めて返す
+        return [{"en": item["word_en"], "jp": item["word_jp"], "count": item["correct_count"]} for item in selected]
+    except:
+        return []
+
 # ==========================================
 # 3. ゲームロジック
 # ==========================================
-def init_game(word_list, time_limit):
+def init_game(word_list, time_limit, mode="NORMAL"):
     """ゲームの初期化"""
     cards = []
     for item in word_list:
-        # 英語カード
-        cards.append({"id": item["en"], "text": item["en"], "pair": item["jp"], "is_jp": False})
-        # 日本語カード
-        cards.append({"id": item["en"], "text": item["jp"], "pair": item["en"], "is_jp": True})
+        # カード情報に現在の正解数(count)も持たせておく（復習モード用）
+        current_count = item.get("count", 0)
+        
+        cards.append({"id": item["en"], "text": item["en"], "pair": item["jp"], "is_jp": False, "count": current_count})
+        cards.append({"id": item["en"], "text": item["jp"], "pair": item["en"], "is_jp": True, "count": current_count})
     
     random.shuffle(cards)
     
@@ -130,7 +167,9 @@ def init_game(word_list, time_limit):
     st.session_state.flipped = []
     st.session_state.matched = set()
     st.session_state.collected_now = [] 
-    st.session_state.mistakes_now = []  
+    st.session_state.mistakes_now = []
+    st.session_state.mastered_pending = [] # ★卒業候補リスト
+    st.session_state.current_mode = mode
     
     st.session_state.start_time = time.time()
     st.session_state.time_limit = time_limit
@@ -145,7 +184,9 @@ def main():
     # --- サイドバー ---
     st.sidebar.title("⚙️ トレーナー設定")
     api_key = st.sidebar.text_input("Gemini API Key", type="password")
-    selected_rank_name = st.sidebar.selectbox("挑戦するランク", list(RANK_MAP.keys()))
+    
+    rank_options = list(RANK_MAP.keys()) + ["🔥 復習モード (Revenge)"]
+    selected_rank_name = st.sidebar.selectbox("挑戦するランク", rank_options)
     
     st.sidebar.divider()
     m_count = get_mistakes_count()
@@ -161,19 +202,33 @@ def main():
     # A. スタート画面
     # ==========================
     if st.session_state.game_state == "IDLE":
-        st.write(f"**{selected_rank_name}** の野生の単語が現れた！(8匹)")
-        if st.button("バトル開始！ (Start)", type="primary"):
-            with st.spinner("草むらから単語を探しています..."):
-                quiz_data = generate_quiz_words(api_key, RANK_MAP[selected_rank_name])
-                init_game(quiz_data, 30) 
-                st.rerun()
+        if "復習モード" in selected_rank_name:
+            if m_count == 0:
+                st.info("復習する単語はありません！素晴らしい！")
+            else:
+                st.write(f"過去に逃げられた **{m_count}** 匹の単語が待っている...")
+                st.caption("※ 10回正解すると「卒業確認」が出ます")
+                if st.button("リベンジバトル開始！", type="primary"):
+                    revenge_words = fetch_revenge_words(8)
+                    if not revenge_words:
+                        st.error("データの取得に失敗しました。")
+                    else:
+                        init_game(revenge_words, 40, mode="REVENGE")
+                        st.rerun()
+        else:
+            st.write(f"**{selected_rank_name}** の野生の単語が現れた！(8匹)")
+            if st.button("バトル開始！ (Start)", type="primary"):
+                with st.spinner("草むらから単語を探しています..."):
+                    quiz_data = generate_quiz_words(api_key, RANK_MAP[selected_rank_name])
+                    init_game(quiz_data, 30, mode="NORMAL") 
+                    st.rerun()
 
     # ==========================
-    # B. プレイ中 (通常 & エキストラ共通)
+    # B. プレイ中
     # ==========================
-    elif st.session_state.game_state in ["PLAYING", "EXTRA"]:
-        if st.session_state.game_state == "EXTRA":
-            st.warning("🔥 エキストラステージ（復習モード）")
+    elif st.session_state.game_state == "PLAYING":
+        if st.session_state.current_mode == "REVENGE":
+            st.warning("🔥 REVENGE BATTLE: 10回正解で卒業チャンス！")
         
         elapsed = time.time() - st.session_state.start_time
         remaining = st.session_state.time_limit - elapsed
@@ -185,14 +240,11 @@ def main():
         st.progress(max(0.0, remaining / st.session_state.time_limit))
         st.caption(f"残り時間: {remaining:.1f}秒")
 
-        # カード表示 (4列 x 4行 = 16枚)
         cols = st.columns(4)
         for i, card in enumerate(st.session_state.cards):
-            # 状態判定
             is_matched = card["id"] in st.session_state.matched
             is_flipped = i in st.session_state.flipped
             
-            # ラベルとスタイルの決定
             if is_matched:
                 label = f"✨ {card['text']}" 
             elif is_flipped:
@@ -213,11 +265,19 @@ def main():
             c2 = st.session_state.cards[idx2]
 
             if c1["id"] == c2["id"]:
-                st.toast(f"Gotcha! {c1['id']} をゲット！")
+                # --- 正解時 ---
+                st.toast(f"Gotcha! {c1['id']}")
                 st.session_state.matched.add(c1["id"])
                 
                 if c1["id"] not in st.session_state.collected_now:
                     st.session_state.collected_now.append(c1["id"])
+                    
+                    # ★重要: 復習モードなら正解数をカウントアップ
+                    if st.session_state.current_mode == "REVENGE":
+                        new_count = increment_correct_count(c1["id"])
+                        # 10回に達したら、保留リスト（卒業候補）に追加
+                        if new_count >= 10:
+                            st.session_state.mastered_pending.append(c1["id"])
                 
                 st.session_state.flipped = []
                 
@@ -228,15 +288,17 @@ def main():
                 time.sleep(0.5)
                 st.rerun()
             else:
-                st.error(f"ああっ！逃げられた... ({c1['text']} ≠ {c2['text']})")
+                # --- 不正解時 ---
+                st.error(f"ミス！ ({c1['text']} ≠ {c2['text']})")
                 
-                en_txt = c1["id"]
-                jp_txt = c1["pair"] if not c1["is_jp"] else c1["text"]
-                save_mistake(en_txt, jp_txt)
-                
-                mistake_obj = {"en": en_txt, "jp": jp_txt}
-                if not any(m["en"] == en_txt for m in st.session_state.mistakes_now):
-                    st.session_state.mistakes_now.append(mistake_obj)
+                if st.session_state.current_mode == "NORMAL":
+                    en_txt = c1["id"]
+                    jp_txt = c1["pair"] if not c1["is_jp"] else c1["text"]
+                    save_mistake(en_txt, jp_txt)
+                    
+                    mistake_obj = {"en": en_txt, "jp": jp_txt}
+                    if not any(m["en"] == en_txt for m in st.session_state.mistakes_now):
+                        st.session_state.mistakes_now.append(mistake_obj)
 
                 time.sleep(1.0)
                 st.session_state.flipped = []
@@ -248,14 +310,15 @@ def main():
     elif st.session_state.game_state == "FINISHED":
         st.header("🏆 バトル終了！")
         
+        # ゲット表示
         if st.session_state.collected_now:
-            st.success(f"ゲットした単語: {', '.join(st.session_state.collected_now)}")
+            msg = "復習完了！" if st.session_state.current_mode == "REVENGE" else "ゲットした単語"
+            st.success(f"{msg}: {', '.join(st.session_state.collected_now)}")
             
             st.divider()
             st.subheader("📖 冒険の記録 (AI Story)")
-            # ★ここで物語を生成します
             if st.button("記録を書く (Generate English Story)"):
-                with st.spinner("レポート作成中 (Writing simple story)..."):
+                with st.spinner("Writing story..."):
                     story = get_english_story(api_key, st.session_state.collected_now)
                     st.info(story)
         else:
@@ -263,66 +326,45 @@ def main():
 
         st.divider()
 
+        # ★ 卒業判定（10回正解した単語がある場合）
+        pending = st.session_state.mastered_pending
+        if pending:
+            st.success(f"🎉 おめでとう！ 以下の単語は正解数が10回に達しました！")
+            st.write(f"卒業候補: {', '.join(pending)}")
+            
+            col_del1, col_del2 = st.columns(2)
+            with col_del1:
+                # 確認ボタン
+                if st.button("✅ リストから削除して卒業させる"):
+                    for w in pending:
+                        delete_mistake(w)
+                    st.balloons()
+                    st.success("卒業しました！リストから削除されました。")
+                    # リストを空にして再描画を防ぐ
+                    st.session_state.mastered_pending = []
+                    time.sleep(2)
+                    st.rerun()
+            with col_del2:
+                if st.button("残しておく"):
+                    st.info("リストに残しました。また復習しましょう！")
+                    st.session_state.mastered_pending = []
+                    st.rerun()
+            st.divider()
+
+        # ミス表示 (通常モードのみ)
         mistakes = st.session_state.mistakes_now
-        if mistakes:
+        if mistakes and st.session_state.current_mode == "NORMAL":
             st.error(f"今回のミス: {len(mistakes)} 匹")
             for m in mistakes:
                 st.text(f"・{m['en']} : {m['jp']}")
             
-            if st.button("🔥 エキストラステージで捕まえ直す！"):
-                init_game(mistakes, 30) 
-                st.session_state.game_state = "EXTRA"
+            if st.button("🔥 すぐに復習する (Quick Revenge)"):
+                init_game(mistakes, 30, mode="REVENGE") 
                 st.rerun()
-        else:
-            st.balloons()
-            st.success("素晴らしい！ノーミスでクリアだ！")
-
-        if st.button("次の町へ進む (New Game)"):
+        
+        if st.button("タイトルに戻る (Back to Title)"):
             st.session_state.game_state = "IDLE"
             st.rerun()
 
 if __name__ == "__main__":
     main()
-
-import streamlit as st
-from supabase import create_client
-
-st.title("🏥 Supabase 接続診断ツール")
-
-# 1. ライブラリチェック
-st.write("1. ライブラリ読み込み: OK")
-
-# 2. Secretsチェック
-try:
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["key"]
-    st.success(f"2. Secrets読み込み: OK (URL: {url[:8]}...)")
-except Exception as e:
-    st.error(f"2. Secrets読み込み: 失敗 ({e})")
-    st.stop()
-
-# 3. 接続チェック
-try:
-    supabase = create_client(url, key)
-    st.success("3. クライアント作成: OK")
-except Exception as e:
-    st.error(f"3. クライアント作成: 失敗 ({e})")
-    st.stop()
-
-# 4. データ取得チェック
-st.write("---")
-st.write("4. データベース接続テスト...")
-
-try:
-    # collected_words テーブルへのアクセス
-    response = supabase.table("collected_words").select("*", count="exact").limit(1).execute()
-    st.success(f"✅ 'collected_words' テーブル: 接続成功 (現在のデータ数: {response.count})")
-except Exception as e:
-    st.error(f"❌ 'collected_words' テーブル: エラー\n\n{e}")
-
-try:
-    # mistaken_words テーブルへのアクセス
-    response = supabase.table("mistaken_words").select("*", count="exact").limit(1).execute()
-    st.success(f"✅ 'mistaken_words' テーブル: 接続成功 (現在のデータ数: {response.count})")
-except Exception as e:
-    st.error(f"❌ 'mistaken_words' テーブル: エラー\n\n{e}")
