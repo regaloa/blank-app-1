@@ -2,7 +2,6 @@ import streamlit as st
 import random
 import time
 import google.generativeai as genai
-
 # ==========================================
 # 1. データ & 設定
 # ==========================================
