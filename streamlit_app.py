@@ -36,6 +36,7 @@ supabase = init_supabase()
 def generate_quiz_words(api_key, rank_prompt):
     """AIに単語リストを作らせる"""
     if not api_key:
+        # APIなし時の予備データ (TOEIC単語8個)
         return [
             {"en": "Strategy",   "jp": "戦略"},
             {"en": "Efficiency", "jp": "効率"},
@@ -103,25 +104,4 @@ def init_game(word_list, time_limit):
     cards = []
     for item in word_list:
         cards.append({"id": item["en"], "text": item["en"], "pair": item["jp"], "is_jp": False})
-        cards.append({"id": item["en"], "text": item["jp"], "pair": item["en"], "is_jp": True})
-    random.shuffle(cards)
-    
-    st.session_state.cards = cards
-    st.session_state.flipped = []
-    st.session_state.matched = set()
-    st.session_state.collected_now = [] 
-    st.session_state.mistakes_now = []  
-    
-    st.session_state.start_time = time.time()
-    st.session_state.time_limit = time_limit
-    st.session_state.game_state = "PLAYING"
-
-# ==========================================
-# 4. アプリ本体
-# ==========================================
-def main():
-    st.set_page_config(page_title="Pokémon English Battle", layout="wide")
-    
-    # --- サイドバー ---
-    st.sidebar.title("⚙️ トレーナー設定")
-    api_key = st.
+        cards.append({"id": item["en"], "text": item["jp"], "pair": item["
