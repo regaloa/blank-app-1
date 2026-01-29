@@ -7,7 +7,7 @@ Google Gemini (AI) と Supabase (データベース) を連携させ、「飽き
 
 ## 🚀 デモアプリ
 ブラウザですぐに試せます（インストール不要）
-### 👉 [ここをクリックしてアプリを開く](ここにあなたのStreamlitアプリのURLを貼り付けてください)
+### 👉 [ここをクリックしてアプリを開く](https://blank-app-8wk1o0gd82u.streamlit.app/#2b2e30d)
 
 ---
 
