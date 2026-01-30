@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components  # ★追加: ブラウザ機能を使うため
 import random
 import time
 import json
@@ -35,12 +36,22 @@ supabase = init_supabase()
 # ==========================================
 
 def play_pronunciation(text):
-    """【修正版】Streamlit公式プレイヤーで再生"""
-    # Googleの音声URL
-    sound_url = f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&q={text}&tl=en"
-    # プレイヤーを表示して自動再生 (autoplay=True)
-    # ※ブラウザによっては初回のみ手動で再生ボタンを押す必要があります
-    st.audio(sound_url, format='audio/mp3', autoplay=True)
+    """【最終版】ブラウザの標準機能で喋らせる（一番確実）"""
+    # JavaScriptを埋め込んで、ブラウザに直接喋らせます
+    # Googleのサーバーを経由しないのでブロックされません
+    js_code = f"""
+    <script>
+        function speak() {{
+            const msg = new SpeechSynthesisUtterance();
+            msg.text = "{text}";
+            msg.lang = 'en-US';
+            window.speechSynthesis.speak(msg);
+        }}
+        speak();
+    </script>
+    """
+    # 画面には何も表示せずに実行
+    components.html(js_code, height=0)
 
 def get_random_pokemon_image(rank_index):
     """PokeAPIを使ってポケモンの画像をランダムに取得"""
@@ -264,9 +275,9 @@ def main():
             else:
                 st.write("👻")
 
-        # ★ 音声再生 (見えるプレイヤーを表示)
+        # ★ 音声再生 (JavaScript方式)
         if st.session_state.last_matched_word:
-            st.success(f"Nice! 🔊 {st.session_state.last_matched_word}")
+            st.success(f"Nice! 🔊 Pronunciation: {st.session_state.last_matched_word}")
             play_pronunciation(st.session_state.last_matched_word)
             st.session_state.last_matched_word = None
 
