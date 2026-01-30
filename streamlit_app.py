@@ -272,7 +272,7 @@ def main():
             st.info("まだポケモンを捕まえていません。")
 
     # --- メイン画面 ---
-    st.title("◓ ポケモン英単語バトル")
+    st.title("◓ ポケモン英単語ゲーム")
     
     if "game_state" not in st.session_state:
         st.session_state.game_state = "IDLE"
