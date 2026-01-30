@@ -18,6 +18,14 @@ RANK_MAP = {
     "マスターボール級 (難関: 700点+)": "TOEIC score 700-750 level (Advanced)"
 }
 
+# DB検索用のタグ付け
+RANK_TAGS = {
+    "モンスターボール級 (基礎: 400点)": "beginner",
+    "スーパーボール級 (応用: 550点)": "intermediate",
+    "ハイパーボール級 (実戦: 700点)": "advanced",
+    "マスターボール級 (難関: 700点+)": "master"
+}
+
 try:
     SUPABASE_URL = st.secrets["supabase"]["url"]
     SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -70,19 +78,43 @@ def get_random_pokemon_data(rank_index):
     except:
         return None, None
 
-def generate_quiz_words(api_key, rank_prompt):
-    """AIに単語リストを作らせる"""
+def get_fallback_words_from_db(rank_name):
+    """【新機能】AIがない場合、DBから単語を取得する"""
+    target_level = RANK_TAGS.get(rank_name, "beginner")
+    
+    try:
+        # DBからランクに合う単語を取得
+        res = supabase.table("toeic_words").select("word_en, word_jp").eq("rank_level", target_level).execute()
+        data = res.data
+        
+        # データが足りない場合は、全レベルから混ぜて補填
+        if len(data) < 8:
+            res_all = supabase.table("toeic_words").select("word_en, word_jp").execute()
+            data = res_all.data
+            
+        if data and len(data) >= 8:
+            selected = random.sample(data, 8)
+            return [{"en": item["word_en"], "jp": item["word_jp"]} for item in selected]
+            
+    except Exception:
+        pass
+    
+    # DBもダメだった場合の最終手段 (ハードコード)
+    return [
+        {"en": "Strategy",   "jp": "戦略"},
+        {"en": "Efficiency", "jp": "効率"},
+        {"en": "Deadline",   "jp": "締め切り"},
+        {"en": "Negotiate",  "jp": "交渉する"},
+        {"en": "Inquiry",    "jp": "問い合わせ"},
+        {"en": "Expand",     "jp": "拡大する"},
+        {"en": "Launch",     "jp": "立ち上げる/発売"},
+        {"en": "Budget",     "jp": "予算"}
+    ]
+
+def generate_quiz_words(api_key, rank_prompt, rank_name_for_db):
+    """AIに単語リストを作らせる (失敗したらDBから取る)"""
     if not api_key:
-        return [
-            {"en": "Strategy",   "jp": "戦略"},
-            {"en": "Efficiency", "jp": "効率"},
-            {"en": "Deadline",   "jp": "締め切り"},
-            {"en": "Negotiate",  "jp": "交渉する"},
-            {"en": "Inquiry",    "jp": "問い合わせ"},
-            {"en": "Expand",     "jp": "拡大する"},
-            {"en": "Launch",     "jp": "立ち上げる/発売"},
-            {"en": "Budget",     "jp": "予算"}
-        ]
+        return get_fallback_words_from_db(rank_name_for_db)
 
     client = genai.Client(api_key=api_key)
     
@@ -102,11 +134,12 @@ def generate_quiz_words(api_key, rank_prompt):
         )
         return json.loads(response.text)
     except:
-        return [{"en": "Error", "jp": "エラー"}]
+        # APIエラー時もDBから取る
+        return get_fallback_words_from_db(rank_name_for_db)
 
 def get_english_story(api_key, words):
     """英語の物語生成"""
-    if not api_key: return "Story skipped (No API Key)."
+    if not api_key: return "Story generation skipped (Needs AI Key)."
     client = genai.Client(api_key=api_key)
     prompt = f"""
     Write a short and **simple** Pokémon-style adventure story in English using these words: {', '.join(words)}.
@@ -123,24 +156,20 @@ def get_english_story(api_key, words):
 # --- DB操作 ---
 
 def save_pokedex(poke_id):
-    """図鑑にポケモンIDを保存"""
     if not poke_id: return
     try:
         chk = supabase.table("user_pokedex").select("id").eq("pokemon_id", poke_id).execute()
         if not chk.data:
             supabase.table("user_pokedex").insert({"pokemon_id": poke_id}).execute()
             return True 
-    except:
-        pass
+    except: pass
     return False
 
 def get_my_pokedex():
-    """図鑑データを全取得"""
     try:
         res = supabase.table("user_pokedex").select("pokemon_id").execute()
         return [r["pokemon_id"] for r in res.data]
-    except:
-        return []
+    except: return []
 
 def save_mistake(en, jp):
     try:
@@ -267,11 +296,15 @@ def main():
         else:
             st.write(f"**{selected_rank_name}** の野生の単語が現れた！(8匹)")
             st.caption("※ すべてのカードを揃えると図鑑に登録されます")
+            if not api_key:
+                st.caption("⚠️ AIキー未設定: オフライン単語帳から出題されます")
+            
             if st.button("バトル開始！ (Start)", type="primary"):
                 with st.spinner("草むらから単語を探しています..."):
                     rank_idx = rank_keys.index(selected_rank_name)
                     pid, pimg = get_random_pokemon_data(rank_idx)
-                    quiz_data = generate_quiz_words(api_key, RANK_MAP[selected_rank_name])
+                    # DBフォールバック用に選択されたランク名を渡す
+                    quiz_data = generate_quiz_words(api_key, RANK_MAP[selected_rank_name], selected_rank_name)
                     init_game(quiz_data, 30, mode="NORMAL", poke_id=pid, poke_img=pimg) 
                     st.rerun()
 
@@ -358,7 +391,6 @@ def main():
     elif st.session_state.game_state == "FINISHED":
         st.header("🏆 バトル終了！")
         
-        # 結果表示
         if st.session_state.is_cleared:
             st.success("Congratulations! ステージクリア！")
             if st.session_state.current_poke_img:
@@ -375,7 +407,6 @@ def main():
 
         st.divider()
 
-        # ★変更点: クリア判定に関係なく、1匹でも捕まえていれば物語ボタンを出す
         if st.session_state.collected_now:
             msg = "復習できた単語" if st.session_state.current_mode == "REVENGE" else "ゲットした単語"
             st.write(f"**{msg}:** {', '.join(st.session_state.collected_now)}")
@@ -388,7 +419,6 @@ def main():
         else:
             st.warning("単語を一匹も捕まえられなかった...")
 
-        # 卒業判定
         pending = st.session_state.mastered_pending
         if pending:
             st.success(f"🎉 卒業候補: {', '.join(pending)}")
@@ -406,7 +436,6 @@ def main():
                     st.session_state.mastered_pending = []
                     st.rerun()
 
-        # リベンジ誘導
         mistakes = st.session_state.mistakes_now
         if mistakes and st.session_state.current_mode == "NORMAL":
             st.error(f"今回のミス: {len(mistakes)} 匹")
