@@ -9,7 +9,7 @@ Google Gemini (AI) が生成する無限の英単語問題で遊べる、新感�
 ブラウザですぐに試せます（インストール不要）
 ### 👉 [https://blank-app-8wk1o0gd82u.streamlit.app/#2b2e30d]
 
-> **⚠️ 注意**: 遊ぶには **Google Gemini APIキー（無料）** が必要です。取得方法は下部に記載しています。
+> **⚠️ 注意**: より快適にゲームをプレイするために **Google Gemini APIキー（無料）** が必要です。取得方法は下部に記載しています。
 
 ---
 
@@ -30,7 +30,7 @@ Google Gemini (AI) が生成する無限の英単語問題で遊べる、新感�
 
 このアプリを動作させるには、以下の2つが必要です。
 
-### 1. Google Gemini API Key (必須)
+### 1. Google Gemini API Key （推奨）
 AIが単語や物語を作るために必要です。
 * **取得方法**: [Google AI Studio](https://aistudio.google.com/app/apikey) にアクセスし、「Create API key」から無料で取得できます。
 * **使い方**: アプリ起動後、サイドバーの入力欄にキーを貼り付けてください。
