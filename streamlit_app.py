@@ -9,6 +9,11 @@ from google.genai import types
 from supabase import create_client
 
 # ==========================================
+# 0. アプリ基本設定 (これが一番上にないといけない)
+# ==========================================
+st.set_page_config(page_title="Pokémon English Battle", layout="wide")
+
+# ==========================================
 # 1. 設定 & 定数
 # ==========================================
 RANK_MAP = {
@@ -18,7 +23,6 @@ RANK_MAP = {
     "マスターボール級 (難関: 700点+)": "TOEIC score 700-750 level (Advanced)"
 }
 
-# DB検索用のタグ付け
 RANK_TAGS = {
     "モンスターボール級 (基礎: 400点)": "beginner",
     "スーパーボール級 (応用: 550点)": "intermediate",
@@ -26,18 +30,26 @@ RANK_TAGS = {
     "マスターボール級 (難関: 700点+)": "master"
 }
 
+# Secretsの読み込み確認
 try:
     SUPABASE_URL = st.secrets["supabase"]["url"]
     SUPABASE_KEY = st.secrets["supabase"]["key"]
 except:
-    st.error("Secretsの設定を確認してください。")
+    st.error("⚠️ Secretsの設定が見つかりません。'.streamlit/secrets.toml' を確認してください。")
     st.stop()
 
 @st.cache_resource
 def init_supabase():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+    try:
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        return None
 
 supabase = init_supabase()
+
+if not supabase:
+    st.error("⚠️ データベースに接続できませんでした。")
+    st.stop()
 
 # ==========================================
 # 2. 外部API & DB関数
@@ -71,23 +83,24 @@ def get_random_pokemon_data(rank_index):
             poke_id = random.randint(387, 1000) 
 
         url = f"https://pokeapi.co/api/v2/pokemon/{poke_id}"
-        res = requests.get(url)
-        data = res.json()
-        img_url = data["sprites"]["front_default"]
-        return poke_id, img_url
+        res = requests.get(url, timeout=3) # タイムアウト設定でフリーズ防止
+        if res.status_code == 200:
+            data = res.json()
+            img_url = data["sprites"]["front_default"]
+            return poke_id, img_url
     except:
-        return None, None
+        pass
+    return None, None
 
 def get_fallback_words_from_db(rank_name):
-    """【新機能】AIがない場合、DBから単語を取得する"""
+    """AIがない場合、DBから単語を取得する"""
     target_level = RANK_TAGS.get(rank_name, "beginner")
     
     try:
-        # DBからランクに合う単語を取得
         res = supabase.table("toeic_words").select("word_en, word_jp").eq("rank_level", target_level).execute()
         data = res.data
         
-        # データが足りない場合は、全レベルから混ぜて補填
+        # データ不足時は全データから補充
         if len(data) < 8:
             res_all = supabase.table("toeic_words").select("word_en, word_jp").execute()
             data = res_all.data
@@ -99,16 +112,16 @@ def get_fallback_words_from_db(rank_name):
     except Exception:
         pass
     
-    # DBもダメだった場合の最終手段 (ハードコード)
+    # 最終手段（DB接続もダメな場合）
     return [
-        {"en": "Strategy",   "jp": "戦略"},
-        {"en": "Efficiency", "jp": "効率"},
-        {"en": "Deadline",   "jp": "締め切り"},
-        {"en": "Negotiate",  "jp": "交渉する"},
-        {"en": "Inquiry",    "jp": "問い合わせ"},
-        {"en": "Expand",     "jp": "拡大する"},
-        {"en": "Launch",     "jp": "立ち上げる/発売"},
-        {"en": "Budget",     "jp": "予算"}
+        {"en": "Error", "jp": "エラー"},
+        {"en": "Retry", "jp": "再読込"},
+        {"en": "Check", "jp": "確認"},
+        {"en": "Connection", "jp": "接続"},
+        {"en": "Database", "jp": "DB"},
+        {"en": "System", "jp": "システム"},
+        {"en": "Update", "jp": "更新"},
+        {"en": "Wait", "jp": "待機"}
     ]
 
 def generate_quiz_words(api_key, rank_prompt, rank_name_for_db):
@@ -134,7 +147,6 @@ def generate_quiz_words(api_key, rank_prompt, rank_name_for_db):
         )
         return json.loads(response.text)
     except:
-        # APIエラー時もDBから取る
         return get_fallback_words_from_db(rank_name_for_db)
 
 def get_english_story(api_key, words):
@@ -243,9 +255,7 @@ def init_game(word_list, time_limit, mode="NORMAL", poke_id=None, poke_img=None)
 # 4. アプリ本体
 # ==========================================
 def main():
-    st.set_page_config(page_title="Pokémon English Battle", layout="wide")
-    
-    # --- サイドバー ---
+    # サイドバー
     st.sidebar.title("⚙️ メニュー")
     api_key = st.sidebar.text_input("Gemini API Key", type="password")
     
@@ -271,15 +281,13 @@ def main():
         else:
             st.info("まだポケモンを捕まえていません。")
 
-    # --- メイン画面 ---
+    # メイン画面
     st.title("◓ ポケモン英単語ゲーム")
     
     if "game_state" not in st.session_state:
         st.session_state.game_state = "IDLE"
 
-    # ==========================
     # A. スタート画面
-    # ==========================
     if st.session_state.game_state == "IDLE":
         if "復習モード" in selected_rank_name:
             if m_count == 0:
@@ -303,14 +311,11 @@ def main():
                 with st.spinner("草むらから単語を探しています..."):
                     rank_idx = rank_keys.index(selected_rank_name)
                     pid, pimg = get_random_pokemon_data(rank_idx)
-                    # DBフォールバック用に選択されたランク名を渡す
                     quiz_data = generate_quiz_words(api_key, RANK_MAP[selected_rank_name], selected_rank_name)
                     init_game(quiz_data, 30, mode="NORMAL", poke_id=pid, poke_img=pimg) 
                     st.rerun()
 
-    # ==========================
     # B. プレイ中
-    # ==========================
     elif st.session_state.game_state == "PLAYING":
         col_info, col_img = st.columns([3, 1])
         with col_info:
@@ -385,9 +390,7 @@ def main():
                 st.session_state.flipped = []
                 st.rerun()
 
-    # ==========================
     # C. 結果画面
-    # ==========================
     elif st.session_state.game_state == "FINISHED":
         st.header("🏆 バトル終了！")
         
