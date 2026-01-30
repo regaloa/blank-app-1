@@ -3,13 +3,10 @@ import random
 import time
 import json
 import requests
-from io import BytesIO  # ★音声データをメモリで扱うために必要
-#from gtts import gTTS   # ★音声読み上げライブラリ
 from google import genai
 from google.genai import types
 from supabase import create_client
-def play_pronunciation(text):
-    return
+
 # ==========================================
 # 1. 設定 & 定数
 # ==========================================
@@ -38,17 +35,16 @@ supabase = init_supabase()
 # ==========================================
 
 def play_pronunciation(text):
-    """【新機能】単語の音声を生成して再生する"""
-    try:
-        # gTTSで音声生成 (lang='en'で英語指定)
-        tts = gTTS(text=text, lang='en')
-        # ファイルに保存せず、メモリ上に音声を書き込む（高速化）
-        audio_bytes = BytesIO()
-        tts.write_to_fp(audio_bytes)
-        # Streamlitで再生
-        st.audio(audio_bytes, format='audio/mp3')
-    except:
-        pass
+    """【修正版】ブラウザで直接音声を再生する（軽量版）"""
+    # Google翻訳の音声API（非公式だが軽量）を使用
+    # ブラウザのAudioタグを埋め込んで再生させます
+    sound_url = f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&q={text}&tl=en"
+    st.markdown(f"""
+        <audio autoplay style="display:none;">
+            <source src="{sound_url}" type="audio/mpeg">
+        </audio>
+    """, unsafe_allow_html=True)
+    # ※画面には表示せず(display:none)、裏で自動再生(autoplay)させます
 
 def get_random_pokemon_image(rank_index):
     """PokeAPIを使ってポケモンの画像をランダムに取得"""
@@ -198,7 +194,6 @@ def init_game(word_list, time_limit, mode="NORMAL", poke_img=None):
     st.session_state.start_time = time.time()
     st.session_state.time_limit = time_limit
     st.session_state.game_state = "PLAYING"
-    # 音声再生用の一時変数
     st.session_state.last_matched_word = None
 
 # ==========================================
@@ -273,11 +268,10 @@ def main():
             else:
                 st.write("👻")
 
-        # ★ここで直前に正解した単語の音声を再生
+        # ★ 音声再生 (軽量版: HTML Audioタグ埋め込み)
         if st.session_state.last_matched_word:
-            st.success(f"Nice! 🔊 Pronunciation: {st.session_state.last_matched_word}")
+            st.success(f"Nice! 🔊 {st.session_state.last_matched_word}")
             play_pronunciation(st.session_state.last_matched_word)
-            # 一回再生したら消す（無限再生防止）
             st.session_state.last_matched_word = None
 
         if remaining <= 0:
@@ -311,7 +305,7 @@ def main():
                 st.toast(f"Gotcha! {c1['id']}")
                 st.session_state.matched.add(c1["id"])
                 
-                # ★音声再生用に単語をセット
+                # 正解時に再生する単語をセット
                 st.session_state.last_matched_word = c1["id"]
                 
                 if c1["id"] not in st.session_state.collected_now:
@@ -330,7 +324,7 @@ def main():
                 time.sleep(0.5)
                 st.rerun()
             else:
-                st.error(f"ミス！ ({c1['text']} ≠ {c2['text']})")
+                st.error(f"ああっ！逃げられた！ ({c1['text']} ≠ {c2['text']})")
                 
                 if st.session_state.current_mode == "NORMAL":
                     en_txt = c1["id"]
