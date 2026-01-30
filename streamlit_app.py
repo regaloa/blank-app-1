@@ -51,10 +51,7 @@ def play_pronunciation(text):
     components.html(js_code, height=0)
 
 def get_random_pokemon_data(rank_index):
-    """
-    PokeAPIからIDと画像を取得
-    戻り値: (id, image_url)
-    """
+    """PokeAPIからIDと画像を取得"""
     try:
         if rank_index == 0:
             poke_id = random.randint(1, 151)
@@ -126,10 +123,9 @@ def get_english_story(api_key, words):
 # --- 図鑑 & ミス管理 DB操作 ---
 
 def save_pokedex(poke_id):
-    """【新機能】図鑑にポケモンIDを保存"""
+    """図鑑にポケモンIDを保存"""
     if not poke_id: return
     try:
-        # すでに登録済みかチェック
         chk = supabase.table("user_pokedex").select("id").eq("pokemon_id", poke_id).execute()
         if not chk.data:
             supabase.table("user_pokedex").insert({"pokemon_id": poke_id}).execute()
@@ -139,10 +135,9 @@ def save_pokedex(poke_id):
     return False
 
 def get_my_pokedex():
-    """【新機能】図鑑データを全取得"""
+    """図鑑データを全取得"""
     try:
         res = supabase.table("user_pokedex").select("pokemon_id").execute()
-        # IDのリストを返す [1, 25, 150...]
         return [r["pokemon_id"] for r in res.data]
     except:
         return []
@@ -212,7 +207,10 @@ def init_game(word_list, time_limit, mode="NORMAL", poke_id=None, poke_img=None)
     st.session_state.time_limit = time_limit
     st.session_state.game_state = "PLAYING"
     st.session_state.last_matched_word = None
-    st.session_state.is_new_discovery = False # 新種発見フラグ
+    
+    # ★クリア判定フラグ（時間切れか、全消しかを区別）
+    st.session_state.is_cleared = False
+    st.session_state.is_new_discovery = False
 
 # ==========================================
 # 4. アプリ本体
@@ -232,13 +230,12 @@ def main():
     m_count = get_mistakes_count()
     st.sidebar.error(f"💀 苦手な単語: {m_count} 語")
     
-    # ★ 図鑑表示機能
+    # ★ 図鑑表示
     st.sidebar.divider()
     with st.sidebar.expander("📖 ポケモン図鑑 (Pokedex)"):
         my_pokedex = get_my_pokedex()
         if my_pokedex:
             st.write(f"現在の発見数: **{len(my_pokedex)}** 匹")
-            # 3列で画像を表示
             cols = st.columns(3)
             for i, pid in enumerate(my_pokedex):
                 img_url = f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{pid}.png"
@@ -272,6 +269,7 @@ def main():
                         st.rerun()
         else:
             st.write(f"**{selected_rank_name}** の野生の単語が現れた！(8匹)")
+            st.caption("※ すべてのカードを揃えると図鑑に登録されます")
             if st.button("バトル開始！ (Start)", type="primary"):
                 with st.spinner("草むらから単語を探しています..."):
                     rank_idx = rank_keys.index(selected_rank_name)
@@ -288,7 +286,7 @@ def main():
         col_info, col_img = st.columns([3, 1])
         with col_info:
             if st.session_state.current_mode == "REVENGE":
-                st.warning("🔥 REVENGE BATTLE: 10回正解で卒業！")
+                st.warning("🔥 REVENGE BATTLE")
             else:
                 st.info("野生の 英単語モンスター が勝負を仕掛けてきた！")
                 
@@ -307,8 +305,10 @@ def main():
             play_pronunciation(st.session_state.last_matched_word)
             st.session_state.last_matched_word = None
 
+        # タイムアップ判定
         if remaining <= 0:
             st.session_state.game_state = "FINISHED"
+            st.session_state.is_cleared = False # 時間切れ
             st.rerun()
 
         cols = st.columns(4)
@@ -340,15 +340,19 @@ def main():
                             st.session_state.mastered_pending.append(c1["id"])
                 
                 st.session_state.flipped = []
+                
+                # ★全クリア判定
                 if len(st.session_state.matched) * 2 == len(st.session_state.cards):
-                    # ★クリア時の処理
-                    # ポケモンを図鑑に保存
+                    st.session_state.is_cleared = True # 完全クリア！
+                    
+                    # ここで図鑑保存
                     if st.session_state.current_poke_id:
                         is_new = save_pokedex(st.session_state.current_poke_id)
                         st.session_state.is_new_discovery = is_new
                     
                     st.session_state.game_state = "FINISHED"
                     st.rerun()
+                
                 time.sleep(0.5)
                 st.rerun()
             else:
@@ -367,27 +371,38 @@ def main():
     elif st.session_state.game_state == "FINISHED":
         st.header("🏆 バトル終了！")
         
-        # ポケモンゲット演出
-        if st.session_state.current_poke_img:
-            st.image(st.session_state.current_poke_img, width=120)
-            if st.session_state.is_new_discovery:
-                st.success("🌟 新しいポケモンを図鑑に登録しました！ (New Pokémon Registered!)")
-                st.balloons()
-            else:
-                st.info("このポケモンはすでに登録済みです。")
-
-        if st.session_state.collected_now:
-            msg = "復習完了！" if st.session_state.current_mode == "REVENGE" else "ゲットした単語"
-            st.success(f"{msg}: {', '.join(st.session_state.collected_now)}")
-            
-            st.divider()
-            st.subheader("📖 冒険の記録")
-            if st.button("記録を書く (Generate English Story)"):
-                with st.spinner("Writing story..."):
-                    story = get_english_story(api_key, st.session_state.collected_now)
-                    st.info(story)
+        # --- 勝敗による分岐 ---
+        if st.session_state.is_cleared:
+            # クリア時
+            st.success("Congratulations! ステージクリア！")
+            if st.session_state.current_poke_img:
+                st.image(st.session_state.current_poke_img, width=120)
+                if st.session_state.is_new_discovery:
+                    st.balloons()
+                    st.success("🌟 やった！ 新しいポケモンを図鑑に登録しました！")
+                else:
+                    st.info("このポケモンはすでに登録済みです。")
         else:
-            st.warning("単語を一匹も捕まえられなかった...")
+            # タイムオーバー時
+            st.error("Time Up! 野生のポケモンは逃げ出してしまった...")
+            if st.session_state.current_poke_img:
+                # 少し残念感を出すためにキャプション追加
+                st.image(st.session_state.current_poke_img, width=100, caption="逃げたポケモン")
+
+        st.divider()
+
+        # ゲット単語表示
+        if st.session_state.collected_now:
+            msg = "復習できた単語" if st.session_state.current_mode == "REVENGE" else "ゲットした単語"
+            st.write(f"**{msg}:** {', '.join(st.session_state.collected_now)}")
+            
+            # クリア時のみストーリー生成
+            if st.session_state.is_cleared:
+                st.subheader("📖 冒険の記録")
+                if st.button("記録を書く (Generate English Story)"):
+                    with st.spinner("Writing story..."):
+                        story = get_english_story(api_key, st.session_state.collected_now)
+                        st.info(story)
 
         # 卒業判定
         pending = st.session_state.mastered_pending
