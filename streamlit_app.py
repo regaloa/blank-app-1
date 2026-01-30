@@ -35,16 +35,12 @@ supabase = init_supabase()
 # ==========================================
 
 def play_pronunciation(text):
-    """【修正版】ブラウザで直接音声を再生する（軽量版）"""
-    # Google翻訳の音声API（非公式だが軽量）を使用
-    # ブラウザのAudioタグを埋め込んで再生させます
+    """【修正版】Streamlit公式プレイヤーで再生"""
+    # Googleの音声URL
     sound_url = f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&q={text}&tl=en"
-    st.markdown(f"""
-        <audio autoplay style="display:none;">
-            <source src="{sound_url}" type="audio/mpeg">
-        </audio>
-    """, unsafe_allow_html=True)
-    # ※画面には表示せず(display:none)、裏で自動再生(autoplay)させます
+    # プレイヤーを表示して自動再生 (autoplay=True)
+    # ※ブラウザによっては初回のみ手動で再生ボタンを押す必要があります
+    st.audio(sound_url, format='audio/mp3', autoplay=True)
 
 def get_random_pokemon_image(rank_index):
     """PokeAPIを使ってポケモンの画像をランダムに取得"""
@@ -268,7 +264,7 @@ def main():
             else:
                 st.write("👻")
 
-        # ★ 音声再生 (軽量版: HTML Audioタグ埋め込み)
+        # ★ 音声再生 (見えるプレイヤーを表示)
         if st.session_state.last_matched_word:
             st.success(f"Nice! 🔊 {st.session_state.last_matched_word}")
             play_pronunciation(st.session_state.last_matched_word)
