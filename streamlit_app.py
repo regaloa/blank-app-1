@@ -4,11 +4,12 @@ import time
 import json
 import requests
 from io import BytesIO  # ★音声データをメモリで扱うために必要
-from gtts import gTTS   # ★音声読み上げライブラリ
+#from gtts import gTTS   # ★音声読み上げライブラリ
 from google import genai
 from google.genai import types
 from supabase import create_client
-
+def play_pronunciation(text):
+    return
 # ==========================================
 # 1. 設定 & 定数
 # ==========================================
