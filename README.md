@@ -1,4 +1,4 @@
-# ◓ Pokémon English Battle (AI英単語バトル)
+# ◓ Pokémon English Game (AI英単語ゲーム)
 
 **「ポケモン図鑑」×「AI物語生成」×「忘却曲線」**
 Google Gemini (AI) が生成する無限の英単語問題で遊べる、新感覚の学習ゲームアプリです。
